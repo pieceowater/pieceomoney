@@ -15,6 +15,8 @@ type Transaction struct {
 	Card        string
 	Name        string
 	Category    string
+	Note        string
+	Tags        string // comma-separated, lowercase
 	Raw         string
 	Fingerprint string
 }
@@ -28,6 +30,23 @@ type CurrencyTotal struct {
 type TransactionsRepo struct{ db *sql.DB }
 
 func NewTransactionsRepo(db *sql.DB) *TransactionsRepo { return &TransactionsRepo{db: db} }
+
+const txColumns = "id, ts, amount_minor, currency, merchant, card, name, category, note, tags"
+
+func scanTransactions(rows *sql.Rows) ([]Transaction, error) {
+	defer rows.Close()
+	var out []Transaction
+	for rows.Next() {
+		var t Transaction
+		var ts int64
+		if err := rows.Scan(&t.ID, &ts, &t.AmountMinor, &t.Currency, &t.Merchant, &t.Card, &t.Name, &t.Category, &t.Note, &t.Tags); err != nil {
+			return nil, err
+		}
+		t.TS = time.Unix(ts, 0)
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
 
 // Insert stores t and reports its id and whether it was new -- false means a
 // row with the same fingerprint already existed (a duplicate Shortcut firing).
@@ -53,24 +72,33 @@ func (r *TransactionsRepo) Insert(ctx context.Context, t Transaction) (int64, bo
 
 func (r *TransactionsRepo) Last(ctx context.Context, limit int) ([]Transaction, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, ts, amount_minor, currency, merchant, card, name, category
-		FROM transactions ORDER BY ts DESC, id DESC LIMIT ?`, limit)
+		SELECT `+txColumns+` FROM transactions ORDER BY ts DESC, id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	return scanTransactions(rows)
+}
 
-	var out []Transaction
-	for rows.Next() {
-		var t Transaction
-		var ts int64
-		if err := rows.Scan(&t.ID, &ts, &t.AmountMinor, &t.Currency, &t.Merchant, &t.Card, &t.Name, &t.Category); err != nil {
-			return nil, err
-		}
-		t.TS = time.Unix(ts, 0)
-		out = append(out, t)
+// Between returns payments with since <= ts < until, oldest first. Personal
+// volumes are small, so grouping and searching happen in Go (SQLite's
+// LIKE/lower() are ASCII-only, which breaks Cyrillic matching).
+func (r *TransactionsRepo) Between(ctx context.Context, since, until time.Time) ([]Transaction, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT `+txColumns+` FROM transactions WHERE ts >= ? AND ts < ? ORDER BY ts, id`,
+		since.Unix(), until.Unix())
+	if err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+	return scanTransactions(rows)
+}
+
+// All returns every transaction, oldest first.
+func (r *TransactionsRepo) All(ctx context.Context) ([]Transaction, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT `+txColumns+` FROM transactions ORDER BY ts, id`)
+	if err != nil {
+		return nil, err
+	}
+	return scanTransactions(rows)
 }
 
 // TotalsBetween sums transactions with since <= ts < until, per currency.

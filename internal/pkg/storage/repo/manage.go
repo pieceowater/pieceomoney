@@ -2,8 +2,6 @@ package repo
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"time"
 )
 
@@ -14,17 +12,25 @@ type MerchantTotal struct {
 }
 
 func (r *TransactionsRepo) Get(ctx context.Context, id int64) (Transaction, bool, error) {
-	var t Transaction
-	var ts int64
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id, ts, amount_minor, currency, merchant, card, name, category
-		FROM transactions WHERE id = ?`, id).
-		Scan(&t.ID, &ts, &t.AmountMinor, &t.Currency, &t.Merchant, &t.Card, &t.Name, &t.Category)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Transaction{}, false, nil
+	rows, err := r.db.QueryContext(ctx, `SELECT `+txColumns+` FROM transactions WHERE id = ?`, id)
+	if err != nil {
+		return Transaction{}, false, err
 	}
-	t.TS = time.Unix(ts, 0)
-	return t, err == nil, err
+	list, err := scanTransactions(rows)
+	if err != nil || len(list) == 0 {
+		return Transaction{}, false, err
+	}
+	return list[0], true, nil
+}
+
+func (r *TransactionsRepo) SetNote(ctx context.Context, id int64, note string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE transactions SET note = ? WHERE id = ?`, note, id)
+	return err
+}
+
+func (r *TransactionsRepo) SetTags(ctx context.Context, id int64, tags string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE transactions SET tags = ? WHERE id = ?`, tags, id)
+	return err
 }
 
 func (r *TransactionsRepo) UpdateCategory(ctx context.Context, id int64, category string) error {
@@ -85,29 +91,6 @@ func (r *TransactionsRepo) TopMerchantsBetween(ctx context.Context, category str
 	return out, rows.Err()
 }
 
-// All returns every transaction, oldest first, for export.
-func (r *TransactionsRepo) All(ctx context.Context) ([]Transaction, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, ts, amount_minor, currency, merchant, card, name, category
-		FROM transactions ORDER BY ts, id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []Transaction
-	for rows.Next() {
-		var t Transaction
-		var ts int64
-		if err := rows.Scan(&t.ID, &ts, &t.AmountMinor, &t.Currency, &t.Merchant, &t.Card, &t.Name, &t.Category); err != nil {
-			return nil, err
-		}
-		t.TS = time.Unix(ts, 0)
-		out = append(out, t)
-	}
-	return out, rows.Err()
-}
-
 // CategorizeMerchant gives every still-uncategorized payment of a merchant
 // the chosen category. Payments the owner already categorized are left alone.
 func (r *TransactionsRepo) CategorizeMerchant(ctx context.Context, merchant, category, placeholder string) (int64, error) {
@@ -118,4 +101,13 @@ func (r *TransactionsRepo) CategorizeMerchant(ctx context.Context, merchant, cat
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// MerchantPayments counts a merchant's payments other than excludeID
+// (case-insensitive name match); used to detect a first purchase there.
+func (r *TransactionsRepo) MerchantPayments(ctx context.Context, merchant string, excludeID int64) (int64, error) {
+	var n int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM transactions WHERE merchant = ? COLLATE NOCASE AND id <> ?`, merchant, excludeID).Scan(&n)
+	return n, err
 }

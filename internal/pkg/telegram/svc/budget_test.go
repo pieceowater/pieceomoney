@@ -2,26 +2,17 @@ package svc
 
 import (
 	"context"
-	"io"
-	"log/slog"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"pieceomoney/internal/core/cfg"
 	"pieceomoney/internal/pkg/storage/repo"
 )
 
 func TestBudgetAlertFiresOncePerThreshold(t *testing.T) {
 	ctx := context.Background()
-	db, err := repo.Connect(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	txs, budgets := repo.NewTransactionsRepo(db), repo.NewBudgetsRepo(db)
-	s := New(&cfg.Config{DefaultCurrency: "KZT", Location: time.UTC}, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		txs, budgets, repo.NewRulesRepo(db))
+	s := newTestService(t)
+	txs, budgets := s.txs, s.budgets
 
 	if err := budgets.Set(ctx, "Food & Drinks", 100000); err != nil { // 1000.00
 		t.Fatal(err)

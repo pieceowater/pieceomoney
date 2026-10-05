@@ -25,6 +25,11 @@ var ownerCommands = []models.BotCommand{
 	{Command: "budget", Description: "Лимиты по категориям"},
 	{Command: "last", Description: "Последние траты"},
 	{Command: "time", Description: "Траты по времени"},
+	{Command: "find", Description: "Поиск по тратам"},
+	{Command: "cards", Description: "Траты по картам"},
+	{Command: "subs", Description: "Регулярные платежи"},
+	{Command: "goals", Description: "Цели накоплений"},
+	{Command: "charts", Description: "Графики"},
 	{Command: "export", Description: "Экспорт всех трат в Excel"},
 }
 
@@ -48,7 +53,7 @@ func NewApp() *App {
 		os.Exit(1)
 	}
 
-	telegram := telegramsvc.New(c, logger, repo.NewTransactionsRepo(sqlDB), repo.NewBudgetsRepo(sqlDB), repo.NewRulesRepo(sqlDB))
+	telegram := telegramsvc.New(c, logger, repo.NewTransactionsRepo(sqlDB), repo.NewBudgetsRepo(sqlDB), repo.NewRulesRepo(sqlDB), repo.NewGoalsRepo(sqlDB))
 
 	b, err := tgbot.New(c.BotToken,
 		tgbot.WithDefaultHandler(telegram.HandleUpdate),

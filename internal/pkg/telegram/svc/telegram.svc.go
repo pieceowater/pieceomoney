@@ -39,29 +39,43 @@ type Service struct {
 	txs     *repo.TransactionsRepo
 	budgets *repo.BudgetsRepo
 	rules   *repo.RulesRepo
+	goals   *repo.GoalsRepo
 
-	// pendingBudget is the category whose limit amount the owner's next
-	// plain-text message sets ("" = none). Single owner, so one slot.
-	mu            sync.Mutex
-	pendingBudget string
+	// pending is what the owner's next plain-text message is an answer to
+	// (a limit amount, a search query, a note...). Single owner, one slot.
+	mu      sync.Mutex
+	pending pending
 }
 
-func New(c *cfg.Config, logger *slog.Logger, txs *repo.TransactionsRepo, budgets *repo.BudgetsRepo, rules *repo.RulesRepo) *Service {
-	return &Service{cfg: c, logger: logger, txs: txs, budgets: budgets, rules: rules}
+// pending kinds: what the next free-text message from the owner means.
+const (
+	pendBudget   = "budget"    // arg: category; text is a limit amount
+	pendFind     = "find"      // text is a search query
+	pendNote     = "note"      // arg: payment id; text is the note ("-" clears)
+	pendTags     = "tags"      // arg: payment id; text is the tag list ("-" clears)
+	pendGoalNew  = "goal_new"  // text is "name; target; monthly"
+	pendGoalEdit = "goal_edit" // arg: goal id; same format
+	pendGoalDep  = "goal_dep"  // arg: goal id; text is an amount (negative = withdraw)
+)
+
+type pending struct{ kind, arg string }
+
+func New(c *cfg.Config, logger *slog.Logger, txs *repo.TransactionsRepo, budgets *repo.BudgetsRepo, rules *repo.RulesRepo, goals *repo.GoalsRepo) *Service {
+	return &Service{cfg: c, logger: logger, txs: txs, budgets: budgets, rules: rules, goals: goals}
 }
 
-func (s *Service) setPending(category string) {
+func (s *Service) setPending(kind, arg string) {
 	s.mu.Lock()
-	s.pendingBudget = category
+	s.pending = pending{kind, arg}
 	s.mu.Unlock()
 }
 
-func (s *Service) takePending() string {
+func (s *Service) takePending() pending {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c := s.pendingBudget
-	s.pendingBudget = ""
-	return c
+	p := s.pending
+	s.pending = pending{}
+	return p
 }
 
 func (s *Service) HandleUpdate(ctx context.Context, b *tgbot.Bot, u *models.Update) {
@@ -149,11 +163,22 @@ func (s *Service) ingest(ctx context.Context, b *tgbot.Bot, text string) {
 		slog.Int64("amount_minor", t.AmountMinor), slog.String("currency", t.Currency),
 		slog.String("merchant", t.Merchant), slog.String("category", t.Category))
 
-	s.send(ctx, b, ledgersvc.FormatSaved(t, s.cfg.Location), [][]models.InlineKeyboardButton{
+	msg := ledgersvc.FormatSaved(t, s.cfg.Location)
+	if s.isNewMerchant(ctx, t) {
+		msg += "\n\n🆕 <b>Новый магазин</b>"
+	}
+	s.send(ctx, b, msg, buttons{
 		{btn("🏷 Категория", fmt.Sprintf("tc:%d", id)), btn("🗑 Удалить", fmt.Sprintf("td:%d", id))},
+		{btn("📝 Заметка", fmt.Sprintf("tn:%d", id)), btn("#️⃣ Теги", fmt.Sprintf("tt:%d", id))},
 		{btn("📊 Обзор", "ov:m"), btn("🏠 Меню", "m")},
 	})
 
+	if text := s.unusualAlert(ctx, t); text != "" {
+		s.send(ctx, b, text, menuRow())
+	}
+	if text := s.dailyAlert(ctx, t); text != "" {
+		s.send(ctx, b, text, menuRow())
+	}
 	if text, rows := s.budgetAlert(ctx, t); text != "" {
 		s.send(ctx, b, text, rows)
 	}

@@ -22,6 +22,11 @@ type Config struct {
 	DefaultCurrency string
 	Location        *time.Location
 
+	// Unusual-payment alerts: a payment above UnusualMultiplier x the usual
+	// size, and the number of payments in one day that triggers a warning.
+	UnusualMultiplier float64
+	DailyPaymentsWarn int
+
 	DBPath string
 }
 
@@ -48,6 +53,9 @@ func Inst() *Config {
 
 			DefaultCurrency: strings.ToUpper(getEnv("DEFAULT_CURRENCY", "KZT")),
 			Location:        loc,
+
+			UnusualMultiplier: getEnvFloat("UNUSUAL_MULTIPLIER", 3),
+			DailyPaymentsWarn: getEnvInt("DAILY_PAYMENTS_WARN", 6),
 
 			DBPath: getEnv("DB_PATH", "data/money.db"),
 		}
@@ -77,6 +85,30 @@ func getRequiredInt64(key string) int64 {
 	v, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 	if err != nil {
 		log.Fatalf("environment variable %s must be an integer, got %q", key, raw)
+	}
+	return v
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	raw, exists := os.LookupEnv(key)
+	if !exists || raw == "" {
+		return defaultValue
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		log.Fatalf("environment variable %s must be an integer, got %q", key, raw)
+	}
+	return v
+}
+
+func getEnvFloat(key string, defaultValue float64) float64 {
+	raw, exists := os.LookupEnv(key)
+	if !exists || raw == "" {
+		return defaultValue
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || v <= 0 {
+		log.Fatalf("environment variable %s must be a positive number, got %q", key, raw)
 	}
 	return v
 }

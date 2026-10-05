@@ -129,11 +129,16 @@ func (s *Service) handleCallback(ctx context.Context, b *tgbot.Bot, cq *models.C
 		return
 	}
 	msg := cq.Message.Message
-	s.setPending("")
+	s.setPending("", "")
 
 	if cq.Data == "ex" {
 		_, _ = b.AnswerCallbackQuery(ctx, &tgbot.AnswerCallbackQueryParams{CallbackQueryID: cq.ID, Text: "Готовлю файл…"})
 		s.sendExport(ctx, b)
+		return
+	}
+	if spec, ok := strings.CutPrefix(cq.Data, "pic:"); ok {
+		_, _ = b.AnswerCallbackQuery(ctx, &tgbot.AnswerCallbackQueryParams{CallbackQueryID: cq.ID, Text: "Рисую…"})
+		s.sendChart(ctx, b, spec)
 		return
 	}
 
@@ -172,6 +177,14 @@ func (s *Service) handleCallback(ctx context.Context, b *tgbot.Bot, cq *models.C
 //	ls  t:<id>            recent payments / one payment
 //	tc:<id>  tk:<id>:<key>  choose / apply a payment's category
 //	td:<id>  tdy:<id>     delete payment (confirm / do)
+//	tn:<id>  tt:<id>      prompt for a payment's note / tags
+//	cd:<p> sh:<p> tg:<p>  cards / top merchants / tags for period p
+//	sb  fd  ch            recurring payments / search prompt / charts menu
+//	gl g:<id> gn          goals list / one goal / new goal prompt
+//	ge:<id> gp:<id>       goal edit / deposit prompt
+//	gq:<id>:<k|m>         quick deposit (k thousand, or the monthly amount)
+//	gd:<id> gdy:<id>      delete goal (confirm / do)
+//	pic:...               chart image, handled in handleCallback
 func (s *Service) route(ctx context.Context, data string) (screen, error) {
 	parts := strings.Split(data, ":")
 	arg := func(i int) string {
@@ -207,6 +220,38 @@ func (s *Service) route(ctx context.Context, data string) (screen, error) {
 		return s.budgetDeleteScreen(ctx, arg(1), true)
 	case "ls":
 		return s.lastScreen(ctx)
+	case "cd":
+		return s.cardsScreen(ctx, arg(1))
+	case "sh":
+		return s.shopsScreen(ctx, arg(1))
+	case "tg":
+		return s.tagsScreen(ctx, arg(1))
+	case "sb":
+		return s.subscriptionsScreen(ctx)
+	case "fd":
+		return s.findPromptScreen(), nil
+	case "ch":
+		return s.chartsScreen(), nil
+	case "tn":
+		return s.notePromptScreen(ctx, id())
+	case "tt":
+		return s.tagsPromptScreen(ctx, id())
+	case "gl":
+		return s.goalsScreen(ctx)
+	case "g":
+		return s.goalScreen(ctx, id(), "")
+	case "gn":
+		return s.goalNewPromptScreen(), nil
+	case "ge":
+		return s.goalEditPromptScreen(ctx, id())
+	case "gp":
+		return s.goalDepositPromptScreen(ctx, id())
+	case "gq":
+		return s.goalQuickDeposit(ctx, id(), arg(2))
+	case "gd":
+		return s.goalDeleteScreen(ctx, id(), false)
+	case "gdy":
+		return s.goalDeleteScreen(ctx, id(), true)
 	case "t":
 		return s.txScreen(ctx, id(), "")
 	case "tc":
@@ -261,8 +306,12 @@ func (s *Service) mainScreen(ctx context.Context) (screen, error) {
 
 	return screen{text: b.String(), rows: buttons{
 		{btn("📊 Обзор", "ov:m"), btn("🏷 Категории", "cs:m")},
-		{btn("🎯 Лимиты", "bl"), btn("🕐 Время", "tm")},
-		{btn("🧾 Последние", "ls"), btn("📤 Excel", "ex")},
+		{btn("🎯 Лимиты", "bl"), btn("🐷 Цели", "gl")},
+		{btn("💳 Карты", "cd:m"), btn("🔁 Подписки", "sb")},
+		{btn("📈 Графики", "ch"), btn("🕐 Время", "tm")},
+		{btn("🏪 Магазины", "sh:m"), btn("#️⃣ Теги", "tg:m")},
+		{btn("🔎 Поиск", "fd"), btn("🧾 Последние", "ls")},
+		{btn("📤 Excel", "ex")},
 	}}, nil
 }
 
@@ -598,7 +647,7 @@ func (s *Service) budgetPromptScreen(ctx context.Context, key string) (screen, e
 	if !ok {
 		return s.budgetsScreen(ctx)
 	}
-	s.setPending(category)
+	s.setPending(pendBudget, category)
 
 	presets := []int{50, 100, 150, 200, 300}
 	row := make([]models.InlineKeyboardButton, 0, len(presets))
@@ -694,6 +743,7 @@ func (s *Service) txScreen(ctx context.Context, id int64, toast string) (screen,
 	}
 	return screen{toast: toast, text: ledgersvc.FormatSaved(t, s.cfg.Location), rows: buttons{
 		{btn("🏷 Категория", fmt.Sprintf("tc:%d", id)), btn("🗑 Удалить", fmt.Sprintf("td:%d", id))},
+		{btn("📝 Заметка", fmt.Sprintf("tn:%d", id)), btn("#️⃣ Теги", fmt.Sprintf("tt:%d", id))},
 		{btn("‹ Последние", "ls"), btn("🏠 Меню", "m")},
 	}}, nil
 }

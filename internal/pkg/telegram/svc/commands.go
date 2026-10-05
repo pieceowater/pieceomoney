@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"html"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
 	tgbot "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 
+	analyticssvc "pieceomoney/internal/pkg/analytics/svc"
 	exportsvc "pieceomoney/internal/pkg/export/svc"
 	ledgersvc "pieceomoney/internal/pkg/ledger/svc"
 )
@@ -41,37 +43,16 @@ func bottomKeyboard() *models.ReplyKeyboardMarkup {
 func (s *Service) handleOwnerText(ctx context.Context, b *tgbot.Bot, text string) bool {
 	text = strings.TrimSpace(text)
 
-	// A pending "send me the limit amount" prompt swallows the next plain message.
-	if pending := s.takePending(); pending != "" && !strings.HasPrefix(text, "/") {
-		limit, err := ledgersvc.ParseAmount(text)
-		if err != nil || limit <= 0 {
-			s.setPending(pending)
-			s.send(ctx, b, "Не понял сумму. Пришли число, например <code>150000</code>.", [][]models.InlineKeyboardButton{
-				{btn("✖️ Отмена", "b:"+catKey(pending))},
-			})
-			return true
-		}
-		if err := s.budgets.Set(ctx, pending, limit); err != nil {
-			s.logger.Error("set budget failed", slog.Any("error", err))
-			s.send(ctx, b, "❌ Ошибка, см. логи.", nil)
-			return true
-		}
-		s.sendRoute(ctx, b, "b:"+catKey(pending))
+	// Bottom-keyboard buttons navigate and cancel any pending prompt.
+	routes := map[string]string{kbOverview: "ov:m", kbBudgets: "bl", kbLast: "ls", kbMenu: "m"}
+	if route, ok := routes[text]; ok {
+		s.setPending("", "")
+		s.sendRoute(ctx, b, route)
 		return true
 	}
 
-	switch text {
-	case kbOverview:
-		s.sendRoute(ctx, b, "ov:m")
-		return true
-	case kbBudgets:
-		s.sendRoute(ctx, b, "bl")
-		return true
-	case kbLast:
-		s.sendRoute(ctx, b, "ls")
-		return true
-	case kbMenu:
-		s.sendRoute(ctx, b, "m")
+	if p := s.takePending(); p.kind != "" && !strings.HasPrefix(text, "/") {
+		s.handlePending(ctx, b, p, text)
 		return true
 	}
 
@@ -82,10 +63,130 @@ func (s *Service) handleOwnerText(ctx context.Context, b *tgbot.Bot, text string
 	return true
 }
 
+// handlePending applies the owner's free-text answer to the prompt that was
+// open. A bad answer re-opens the same prompt with a hint.
+func (s *Service) handlePending(ctx context.Context, b *tgbot.Bot, p pending, text string) {
+	retry := func(msg, cancelRoute string) {
+		s.setPending(p.kind, p.arg)
+		s.send(ctx, b, msg, buttons{{btn("✖️ Отмена", cancelRoute)}})
+	}
+	fail := func(what string, err error) {
+		s.logger.Error(what+" failed", slog.Any("error", err))
+		s.send(ctx, b, "❌ Ошибка, см. логи.", menuRow())
+	}
+	id, _ := strconv.ParseInt(p.arg, 10, 64)
+
+	switch p.kind {
+	case pendBudget:
+		limit, err := ledgersvc.ParseAmount(text)
+		if err != nil || limit <= 0 {
+			retry("Не понял сумму. Пришли число, например <code>150000</code>.", "b:"+catKey(p.arg))
+			return
+		}
+		if err := s.budgets.Set(ctx, p.arg, limit); err != nil {
+			fail("set budget", err)
+			return
+		}
+		s.sendRoute(ctx, b, "b:"+catKey(p.arg))
+
+	case pendFind:
+		s.sendFind(ctx, b, text)
+
+	case pendNote:
+		note := text
+		if note == "-" {
+			note = ""
+		}
+		if err := s.txs.SetNote(ctx, id, note); err != nil {
+			fail("set note", err)
+			return
+		}
+		s.sendRoute(ctx, b, "t:"+p.arg)
+
+	case pendTags:
+		tags := analyticssvc.NormalizeTags(text)
+		if text == "-" {
+			tags = ""
+		}
+		if err := s.txs.SetTags(ctx, id, tags); err != nil {
+			fail("set tags", err)
+			return
+		}
+		s.sendRoute(ctx, b, "t:"+p.arg)
+
+	case pendGoalNew, pendGoalEdit:
+		name, target, monthly, err := parseGoal(text)
+		cancel := "gl"
+		if p.kind == pendGoalEdit {
+			cancel = "g:" + p.arg
+		}
+		if err != nil {
+			retry(err.Error(), cancel)
+			return
+		}
+		if p.kind == pendGoalNew {
+			newID, err := s.goals.Create(ctx, name, target, monthly)
+			if err != nil {
+				fail("create goal", err)
+				return
+			}
+			s.sendRoute(ctx, b, fmt.Sprintf("g:%d", newID))
+			return
+		}
+		if err := s.goals.Update(ctx, id, name, target, monthly); err != nil {
+			fail("update goal", err)
+			return
+		}
+		s.sendRoute(ctx, b, "g:"+p.arg)
+
+	case pendGoalDep:
+		amount, err := ledgersvc.ParseAmount(text)
+		if err != nil || amount == 0 {
+			retry("Не понял сумму. Пришли число, например <code>50000</code> (минус, чтобы снять).", "g:"+p.arg)
+			return
+		}
+		if err := s.goals.Deposit(ctx, id, amount); err != nil {
+			fail("goal deposit", err)
+			return
+		}
+		s.sendRoute(ctx, b, "g:"+p.arg)
+	}
+}
+
+// parseGoal reads "name; target; monthly" (monthly optional).
+func parseGoal(text string) (name string, target, monthly int64, err error) {
+	parts := strings.FieldsFunc(text, func(r rune) bool { return r == ';' || r == '\n' })
+	if len(parts) < 2 {
+		return "", 0, 0, fmt.Errorf("Нужен формат: <code>название; цель; в месяц</code>, например <code>Отпуск; 1500000; 150000</code>")
+	}
+	name = strings.TrimSpace(parts[0])
+	if r := []rune(name); len(r) == 0 || len(r) > 40 {
+		return "", 0, 0, fmt.Errorf("Название — от 1 до 40 символов.")
+	}
+	if target, err = ledgersvc.ParseAmount(parts[1]); err != nil || target <= 0 {
+		return "", 0, 0, fmt.Errorf("Не понял сумму цели: <code>%s</code>", html.EscapeString(strings.TrimSpace(parts[1])))
+	}
+	if len(parts) > 2 && strings.TrimSpace(parts[2]) != "" {
+		if monthly, err = ledgersvc.ParseAmount(parts[2]); err != nil || monthly < 0 {
+			return "", 0, 0, fmt.Errorf("Не понял сумму в месяц: <code>%s</code>", html.EscapeString(strings.TrimSpace(parts[2])))
+		}
+	}
+	return name, target, monthly, nil
+}
+
 func (s *Service) handleCommand(ctx context.Context, b *tgbot.Bot, text string) {
 	head, args, _ := strings.Cut(text, " ")
 	cmd, _, _ := strings.Cut(strings.TrimPrefix(head, "/"), "@")
 	args = strings.TrimSpace(args)
+
+	simple := map[string]string{
+		"menu": "m", "help": "m", "stats": "ov:m", "time": "tm", "last": "ls", "cards": "cd:m",
+		"subs": "sb", "goals": "gl", "charts": "ch", "tags": "tg:m", "shops": "sh:m",
+	}
+	if route, ok := simple[cmd]; ok {
+		s.sendRoute(ctx, b, route)
+		return
+	}
 
 	switch cmd {
 	case "start":
@@ -100,16 +201,14 @@ func (s *Service) handleCommand(ctx context.Context, b *tgbot.Bot, text string) 
 			s.logger.Error("failed to send start", slog.Any("error", err))
 		}
 		s.sendRoute(ctx, b, "m")
-	case "menu", "help":
-		s.sendRoute(ctx, b, "m")
-	case "stats":
-		s.sendRoute(ctx, b, "ov:m")
-	case "time":
-		s.sendRoute(ctx, b, "tm")
+	case "find":
+		if args == "" {
+			s.sendRoute(ctx, b, "fd")
+			return
+		}
+		s.sendFind(ctx, b, args)
 	case "export":
 		s.sendExport(ctx, b)
-	case "last":
-		s.sendRoute(ctx, b, "ls")
 	case "budget":
 		s.cmdBudget(ctx, b, args)
 	case "cat":

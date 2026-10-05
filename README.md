@@ -22,8 +22,15 @@ Apple Pay tap
 - **Overview** for today, week, month and previous month, with each category's share of spending.
 - **Monthly limits per category** with progress, remaining amount per day and end-of-month pace. Alerts at 90% and again at 100%.
 - **Time analytics**: spending by time of day and by weekday over the last 90 days.
-- **Recent payments**: change a payment's category or delete it.
-- **Excel export** of all transactions, plus a category-by-month summary sheet.
+- **Cards**: spending per card for any period.
+- **Recurring payments**: subscriptions detected automatically, with the next expected charge and a monthly total.
+- **Unusual-payment alerts**: a payment far above your usual size, a first purchase at a new merchant, too many payments in one day.
+- **Charts** sent as images: category pie with a colour legend, spending by day, six-month trend.
+- **Search** across merchants, categories, notes and tags, plus a top-merchants view.
+- **Notes and tags** on any payment (for example `#trip`, `#gift`), with spending totals per tag.
+- **Savings goals**: target, monthly plan, deposits and withdrawals, progress and estimated completion date.
+- **Recent payments**: change a payment's category, add a note or tags, or delete it.
+- **Excel export** of all transactions (including notes and tags), plus a category-by-month summary sheet.
 - **Owner-only**: the bot ignores everyone except your Telegram account.
 
 ## Requirements
@@ -55,6 +62,8 @@ Apple Pay tap
 | `BOT_TOKEN` | yes | | Bot token from @BotFather |
 | `OWNER_USER_ID` | yes | | Your numeric Telegram user id; the only account the bot talks to |
 | `DEFAULT_CURRENCY` | no | `KZT` | Currency used for limits and analytics, and the fallback when a payment has none |
+| `UNUSUAL_MULTIPLIER` | no | `3` | A payment above this multiple of your usual size triggers an alert (needs about 15 payments of history) |
+| `DAILY_PAYMENTS_WARN` | no | `6` | Warn when one day reaches this many payments |
 | `TZ_NAME` | no | `Asia/Almaty` | Timezone for displayed dates and day/week/month boundaries |
 | `DB_PATH` | no | `data/money.db` | SQLite file |
 
@@ -127,11 +136,35 @@ Everything is driven by inline buttons that edit one message in place, plus a pe
 | Overview | Totals for today / week / month / previous month, category shares, comparison with last month |
 | Categories | Spending per category, drill into top merchants |
 | Limits | Monthly limit per category: progress bar, remaining per day, projected end-of-month spend |
+| Goals | Savings goals with progress, this month's deposits against the plan, and an estimated finish date |
+| Cards | Spending per card with shares |
+| Recurring | Subscriptions found from repeating payments, next charge, monthly total |
+| Charts | Category pie, spending by day, six-month trend, sent as images |
 | Time | Spending by time of day and weekday (90 days) |
-| Recent | Last payments; change category or delete |
+| Merchants | Top merchants for a period |
+| Tags | Spending per tag |
+| Search | Totals, top merchants and latest hits for a word or `#tag` |
+| Recent | Last payments; change category, add note or tags, delete |
 | Excel | Sends an `.xlsx` with all transactions |
 
 Limits and analytics count payments in `DEFAULT_CURRENCY`; other currencies appear as a separate line in the overview. Limit alerts fire once at 90% and once at 100% as a payment crosses each threshold.
+
+### Alerts
+
+Each new payment is checked and the bot messages you when:
+
+- it is a **first purchase at a new merchant** (a marker on the confirmation);
+- it is **unusually large**: above the larger of `UNUSUAL_MULTIPLIER` x your median payment and 1.5 x your 90th-percentile payment over the last 90 days, so habitual big purchases don't trigger it;
+- it brings the day's count to `DAILY_PAYMENTS_WARN`;
+- it pushes a category to 90% or 100% of its monthly limit.
+
+### Recurring payments
+
+A series is reported when the same merchant charges a similar amount (within 20% of the median) on a steady schedule: monthly (3 or more payments, about 26 to 34 days apart) or weekly (4 or more). A series whose next charge is long overdue is treated as cancelled and dropped.
+
+### Goals
+
+Create a goal with `name; target; per month`, for example `Vacation; 1500000; 150000`. Deposit with the buttons or by typing an amount; a negative amount withdraws. Deposits are tracked separately from spending and don't count as expenses.
 
 ### Commands
 
@@ -143,12 +176,19 @@ Limits and analytics count payments in `DEFAULT_CURRENCY`; other currencies appe
 | `/budget` | Limits; `/budget <category> <amount>` sets one, `/budget <category> off` removes it |
 | `/last` | Recent payments |
 | `/time` | Time analytics |
+| `/cards` | Spending per card |
+| `/subs` | Recurring payments |
+| `/goals` | Savings goals |
+| `/charts` | Charts menu |
+| `/shops` | Top merchants |
+| `/tags` | Spending per tag |
+| `/find <text>` | Search; start with `#` to search tags |
 | `/export` | Excel export |
 | `/cat <merchant> = <category>` | Remember a merchant's category |
 
 ### Excel export
 
-The workbook has two sheets: all transactions (real date, time and number cells, frozen header, filters) and a category-by-month summary in `DEFAULT_CURRENCY`.
+The workbook has two sheets: all transactions (real date, time and number cells, notes and tags, frozen header, filters) and a category-by-month summary in `DEFAULT_CURRENCY`.
 
 ## Security
 
@@ -171,9 +211,11 @@ cmd/server                      entry point
 internal/app.go                 wiring, long polling, command menu
 internal/core/cfg               environment configuration
 internal/pkg/ledger/svc         payload parsing, amount and currency detection, formatting
-internal/pkg/storage/repo       SQLite schema and repositories
-internal/pkg/telegram/svc       update handling, screens, commands, budget alerts
+internal/pkg/analytics/svc      groupings, search, recurring detection, unusual-payment threshold
+internal/pkg/charts/svc         PNG charts (pie with legend, bars)
+internal/pkg/storage/repo       SQLite schema, migrations and repositories
+internal/pkg/telegram/svc       update handling, screens, commands, alerts, goals
 internal/pkg/export/svc         Excel export
 ```
 
-Money is stored as integer minor units. A fingerprint over the payment fields makes duplicate firings idempotent.
+Existing databases are migrated automatically on start. Money is stored as integer minor units. A fingerprint over the payment fields makes duplicate firings idempotent.

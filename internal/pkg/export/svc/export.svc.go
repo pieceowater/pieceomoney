@@ -45,8 +45,8 @@ func BuildXLSX(txs []repo.Transaction, defaultCurrency string, loc *time.Locatio
 }
 
 func writeTransactions(f *excelize.File, txs []repo.Transaction, loc *time.Location) error {
-	headers := []string{"Дата", "Время", "Сумма", "Валюта", "Магазин", "Карта", "Категория", "Описание"}
-	if err := f.SetSheetRow(sheetTx, "A1", &[]any{headers[0], headers[1], headers[2], headers[3], headers[4], headers[5], headers[6], headers[7]}); err != nil {
+	headers := []any{"Дата", "Время", "Сумма", "Валюта", "Магазин", "Карта", "Категория", "Описание", "Заметка", "Теги"}
+	if err := f.SetSheetRow(sheetTx, "A1", &headers); err != nil {
 		return err
 	}
 
@@ -58,7 +58,7 @@ func writeTransactions(f *excelize.File, txs []repo.Transaction, loc *time.Locat
 		clock := time.Date(1899, 12, 30, local.Hour(), local.Minute(), local.Second(), 0, time.UTC)
 		row := i + 2
 		err := f.SetSheetRow(sheetTx, fmt.Sprintf("A%d", row), &[]any{
-			day, clock, float64(t.AmountMinor) / 100, t.Currency, t.Merchant, t.Card, t.Category, t.Name,
+			day, clock, float64(t.AmountMinor) / 100, t.Currency, t.Merchant, t.Card, t.Category, t.Name, t.Note, t.Tags,
 		})
 		if err != nil {
 			return err
@@ -87,7 +87,7 @@ func writeTransactions(f *excelize.File, txs []repo.Transaction, loc *time.Locat
 	}
 
 	last := len(txs) + 1
-	if err := f.SetCellStyle(sheetTx, "A1", "H1", headStyle); err != nil {
+	if err := f.SetCellStyle(sheetTx, "A1", "J1", headStyle); err != nil {
 		return err
 	}
 	if len(txs) > 0 {
@@ -102,7 +102,7 @@ func writeTransactions(f *excelize.File, txs []repo.Transaction, loc *time.Locat
 		}
 	}
 
-	widths := map[string]float64{"A": 12, "B": 8, "C": 14, "D": 8, "E": 28, "F": 20, "G": 18, "H": 28}
+	widths := map[string]float64{"A": 12, "B": 8, "C": 14, "D": 8, "E": 28, "F": 20, "G": 18, "H": 28, "I": 28, "J": 18}
 	for col, w := range widths {
 		if err := f.SetColWidth(sheetTx, col, col, w); err != nil {
 			return err
@@ -111,7 +111,7 @@ func writeTransactions(f *excelize.File, txs []repo.Transaction, loc *time.Locat
 	if err := f.SetPanes(sheetTx, &excelize.Panes{Freeze: true, YSplit: 1, TopLeftCell: "A2", ActivePane: "bottomLeft"}); err != nil {
 		return err
 	}
-	return f.AutoFilter(sheetTx, fmt.Sprintf("A1:H%d", max(last, 2)), nil)
+	return f.AutoFilter(sheetTx, fmt.Sprintf("A1:J%d", max(last, 2)), nil)
 }
 
 func writeSummary(f *excelize.File, txs []repo.Transaction, currency string, loc *time.Location) error {

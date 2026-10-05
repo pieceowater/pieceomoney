@@ -275,6 +275,16 @@ func FormatSaved(t repo.Transaction, loc *time.Location) string {
 		fmt.Fprintf(&b, "\n🧾 <b>Описание:</b> %s", html.EscapeString(t.Name))
 	}
 	fmt.Fprintf(&b, "\n📅 <b>Дата:</b> %s", t.TS.In(loc).Format("02.01.2006 15:04"))
+	if t.Note != "" {
+		fmt.Fprintf(&b, "\n📝 %s", html.EscapeString(t.Note))
+	}
+	if t.Tags != "" {
+		tags := strings.Split(t.Tags, ",")
+		for i, tag := range tags {
+			tags[i] = "#" + html.EscapeString(tag)
+		}
+		fmt.Fprintf(&b, "\n%s", strings.Join(tags, " "))
+	}
 	return b.String()
 }
 

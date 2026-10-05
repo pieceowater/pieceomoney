@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     card TEXT NOT NULL,
     name TEXT NOT NULL,
     category TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '',   -- comma-separated, lowercase
     raw TEXT NOT NULL,
     -- sha256 of the normalized fields: an Apple Shortcuts automation can
     -- fire twice for one tap, and the same payload must not count twice.
@@ -35,6 +37,23 @@ CREATE TABLE IF NOT EXISTS budgets (
     category TEXT PRIMARY KEY COLLATE NOCASE,
     limit_minor INTEGER NOT NULL
 );
+
+-- Savings goals; deposits are tracked separately so progress can be shown
+-- for the current month as well as in total.
+CREATE TABLE IF NOT EXISTS goals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    target_minor INTEGER NOT NULL,
+    monthly_minor INTEGER NOT NULL DEFAULT 0,
+    created_ts INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS goal_deposits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal_id INTEGER NOT NULL,
+    ts INTEGER NOT NULL,
+    amount_minor INTEGER NOT NULL   -- negative = withdrawal
+);
+CREATE INDEX IF NOT EXISTS idx_goal_deposits_goal ON goal_deposits(goal_id, ts);
 
 -- merchant -> category, for payments whose payload carries no category.
 CREATE TABLE IF NOT EXISTS merchant_rules (
@@ -67,10 +86,17 @@ func Connect(dbPath string) (*sql.DB, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("repo: apply schema: %w", err)
 	}
-	// Added after the first release of the schema; no-op on a fresh table.
-	if _, err := db.Exec("ALTER TABLE transactions ADD COLUMN category TEXT NOT NULL DEFAULT ''"); err != nil &&
-		!strings.Contains(err.Error(), "duplicate column name") {
-		return nil, fmt.Errorf("repo: migrate transactions.category: %w", err)
+	// Columns added after the first release of the schema; no-ops on a table
+	// that already has them.
+	for _, col := range []string{
+		"category TEXT NOT NULL DEFAULT ''",
+		"note TEXT NOT NULL DEFAULT ''",
+		"tags TEXT NOT NULL DEFAULT ''",
+	} {
+		if _, err := db.Exec("ALTER TABLE transactions ADD COLUMN " + col); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column name") {
+			return nil, fmt.Errorf("repo: migrate transactions (%s): %w", col, err)
+		}
 	}
 	return db, nil
 }
