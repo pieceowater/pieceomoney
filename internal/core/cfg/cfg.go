@@ -1,0 +1,82 @@
+// Package cfg holds the bot's environment configuration -- one Config built
+// once from the environment, required keys fail startup instead of silently
+// defaulting.
+package cfg
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/joho/godotenv"
+)
+
+type Config struct {
+	BotToken    string
+	OwnerUserID int64
+
+	DefaultCurrency string
+	Location        *time.Location
+
+	DBPath string
+}
+
+var (
+	instance *Config
+	once     sync.Once
+)
+
+func Inst() *Config {
+	once.Do(func() {
+		if err := godotenv.Load(); err != nil {
+			fmt.Println("No .env file found, loading from OS environment variables.")
+		}
+
+		tzName := getEnv("TZ_NAME", "Asia/Almaty")
+		loc, err := time.LoadLocation(tzName)
+		if err != nil {
+			log.Fatalf("environment variable TZ_NAME: unknown timezone %q: %v", tzName, err)
+		}
+
+		instance = &Config{
+			BotToken:    getRequiredEnv("BOT_TOKEN"),
+			OwnerUserID: getRequiredInt64("OWNER_USER_ID"),
+
+			DefaultCurrency: strings.ToUpper(getEnv("DEFAULT_CURRENCY", "KZT")),
+			Location:        loc,
+
+			DBPath: getEnv("DB_PATH", "data/money.db"),
+		}
+	})
+	return instance
+}
+
+func getEnv(key, defaultValue string) string {
+	if value, exists := os.LookupEnv(key); exists && value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+// getRequiredEnv fails startup instead of silently falling back to a
+// hardcoded default for a value with no safe default.
+func getRequiredEnv(key string) string {
+	value, exists := os.LookupEnv(key)
+	if !exists || value == "" {
+		log.Fatalf("required environment variable %s is not set", key)
+	}
+	return value
+}
+
+func getRequiredInt64(key string) int64 {
+	raw := getRequiredEnv(key)
+	v, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
+		log.Fatalf("environment variable %s must be an integer, got %q", key, raw)
+	}
+	return v
+}
