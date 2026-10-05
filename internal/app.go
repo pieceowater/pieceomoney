@@ -25,6 +25,7 @@ var ownerCommands = []models.BotCommand{
 	{Command: "budget", Description: "Лимиты по категориям"},
 	{Command: "last", Description: "Последние траты"},
 	{Command: "time", Description: "Траты по времени"},
+	{Command: "add", Description: "Добавить трату вручную"},
 	{Command: "find", Description: "Поиск по тратам"},
 	{Command: "cards", Description: "Траты по картам"},
 	{Command: "subs", Description: "Регулярные платежи"},

@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	ledgersvc "pieceomoney/internal/pkg/ledger/svc"
 	"strconv"
 	"strings"
 	"testing"
@@ -112,7 +113,7 @@ func TestAllReachableScreens(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"cd:m", "sb", "sh:m", "tg:m", "ch", "fd", "gl", "g:1", "gp:1", "ge:1", "gn", "tn:1", "tt:1"} {
+	for _, want := range []string{"ad", "cd:m", "sb", "sh:m", "tg:m", "ch", "fd", "gl", "g:1", "gp:1", "ge:1", "gn", "tn:1", "tt:1"} {
 		if !seen[want] {
 			t.Errorf("screen %q is not reachable from the main menu", want)
 		}
@@ -215,6 +216,7 @@ func TestPromptsSetPending(t *testing.T) {
 	cases := []struct{ route, kind, arg string }{
 		{"bs:" + catKey("Travel"), pendBudget, "Travel"},
 		{"fd", pendFind, ""},
+		{"ad", pendAdd, ""},
 		{"tn:1", pendNote, "1"},
 		{"tt:1", pendTags, "1"},
 		{"gn", pendGoalNew, ""},
@@ -363,5 +365,45 @@ func TestDailyAlertFiresOnceAtThreshold(t *testing.T) {
 	}
 	if alerts != 1 {
 		t.Errorf("alerts = %d, want exactly 1", alerts)
+	}
+}
+
+func TestManualEntryIsStoredWithTagsAndCountsInStats(t *testing.T) {
+	s := newTestService(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	for _, in := range []string{"1500 Такси вчера #работа", "1500 Такси вчера #работа", "250.50 Кофе"} {
+		tx, err := ledgersvc.ParseManual(in, "KZT", time.UTC, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx.Category = uncategorized
+		if _, inserted, err := s.txs.Insert(ctx, tx); err != nil || !inserted {
+			t.Fatalf("Insert(%q): inserted=%v err=%v", in, inserted, err)
+		}
+		now = now.Add(time.Nanosecond) // the nonce is the entry time
+	}
+
+	all, err := s.txs.All(ctx)
+	if err != nil || len(all) != 3 {
+		t.Fatalf("stored %d manual entries (want 3, duplicates allowed): %v", len(all), err)
+	}
+	var taxi int
+	for _, tx := range all {
+		if tx.Merchant == "Такси" {
+			taxi++
+			if tx.Tags != "работа" || tx.Card != "Вручную" || tx.AmountMinor != 150000 {
+				t.Errorf("manual entry lost data: %+v", tx)
+			}
+		}
+	}
+	if taxi != 2 {
+		t.Errorf("taxi entries = %d, want 2", taxi)
+	}
+
+	sc, err := s.route(ctx, "tg:m")
+	if err != nil || !strings.Contains(sc.text, "работа") {
+		t.Errorf("tag screen should list the manual tag: %v\n%s", err, sc.text)
 	}
 }

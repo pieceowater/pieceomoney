@@ -68,6 +68,20 @@ func (s *Service) tagsScreen(ctx context.Context, key string) (screen, error) {
 		[]models.InlineKeyboardButton{btn("🔎 Поиск по тегу", "fd")})
 }
 
+// ---- manual entry ----
+
+func (s *Service) addPromptScreen() screen {
+	s.setPending(pendAdd, "")
+	return screen{
+		text: "➕ <b>Новая трата</b>\n\nПришли одной строкой: сумма, потом название. Остальное по желанию:\n\n" +
+			"<code>1500 Такси</code>\n" +
+			"<code>3200 Магнум вчера #продукты</code>\n" +
+			"<code>12 USD Steam 03.10</code>\n\n" +
+			"Сумма идёт первой и без пробелов. Дата: сегодня, вчера, позавчера или 05.10 (можно today / yesterday). Валюта: код вроде USD. Минус в начале — возврат.",
+		rows: buttons{{btn("✖️ Отмена", "m")}},
+	}
+}
+
 // ---- recurring payments ----
 
 var everyLabel = map[string]string{"weekly": "раз в неделю", "monthly": "раз в месяц"}
@@ -220,11 +234,10 @@ var monthShort = [...]string{"", "янв", "фев", "мар", "апр", "май
 
 func (s *Service) chartsScreen() screen {
 	return screen{
-		text: "📈 <b>Графики</b>\n\nВыбери график, пришлю картинкой.",
+		text: "📈 <b>Графики</b>\n\n🥧 Категории за период: месяц, неделя или прошлый месяц.\n📊 Траты по дням текущего месяца.\n📈 Тренд по месяцам за полгода.\n\nВыбери график, пришлю картинкой.",
 		rows: buttons{
-			{btn("🥧 Категории · месяц", "pic:pie:m"), btn("🥧 Прошлый месяц", "pic:pie:pm")},
-			{btn("🥧 Категории · неделя", "pic:pie:w"), btn("📊 По дням месяца", "pic:days")},
-			{btn("📈 Тренд за 6 месяцев", "pic:trend")},
+			{btn("🥧 Месяц", "pic:pie:m"), btn("🥧 Неделя", "pic:pie:w"), btn("🥧 Прошлый", "pic:pie:pm")},
+			{btn("📊 По дням", "pic:days"), btn("📈 Тренд", "pic:trend")},
 			{btn("🏠 Меню", "m")},
 		},
 	}
@@ -297,8 +310,8 @@ func (s *Service) renderChart(ctx context.Context, spec string) ([]byte, string,
 		if sum == 0 {
 			return nil, "", nil
 		}
-		data, err := chartssvc.Bars(bars, 1100, 560)
-		return data, fmt.Sprintf("📊 <b>Траты по дням · %s %d</b>\nВсего: %s (%s)", monthNames[now.Month()], now.Year(), s.money(sum), html.EscapeString(cur)), err
+		data, err := chartssvc.Bars(bars, 780, 520, 15)
+		return data, fmt.Sprintf("📊 <b>Траты по дням · %s %d</b>\nВсего: %s", monthNames[now.Month()], now.Year(), s.money(sum)), err
 
 	case "trend":
 		first := s.monthStart(now).AddDate(0, -5, 0)
@@ -316,7 +329,7 @@ func (s *Service) renderChart(ctx context.Context, spec string) ([]byte, string,
 		if sum == 0 {
 			return nil, "", nil
 		}
-		data, err := chartssvc.Bars(bars, 1000, 560)
+		data, err := chartssvc.Bars(bars, 780, 520, 20)
 		return data, fmt.Sprintf("📈 <b>Траты по месяцам</b>\nЗа полгода: %s", s.money(sum)), err
 	}
 	return nil, "", fmt.Errorf("unknown chart %q", spec)

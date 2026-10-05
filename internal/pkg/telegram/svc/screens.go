@@ -179,7 +179,7 @@ func (s *Service) handleCallback(ctx context.Context, b *tgbot.Bot, cq *models.C
 //	td:<id>  tdy:<id>     delete payment (confirm / do)
 //	tn:<id>  tt:<id>      prompt for a payment's note / tags
 //	cd:<p> sh:<p> tg:<p>  cards / top merchants / tags for period p
-//	sb  fd  ch            recurring payments / search prompt / charts menu
+//	sb  fd  ch  ad        recurring payments / search prompt / charts menu / add-payment prompt
 //	gl g:<id> gn          goals list / one goal / new goal prompt
 //	ge:<id> gp:<id>       goal edit / deposit prompt
 //	gq:<id>:<k|m>         quick deposit (k thousand, or the monthly amount)
@@ -230,6 +230,8 @@ func (s *Service) route(ctx context.Context, data string) (screen, error) {
 		return s.subscriptionsScreen(ctx)
 	case "fd":
 		return s.findPromptScreen(), nil
+	case "ad":
+		return s.addPromptScreen(), nil
 	case "ch":
 		return s.chartsScreen(), nil
 	case "tn":
@@ -305,6 +307,7 @@ func (s *Service) mainScreen(ctx context.Context) (screen, error) {
 	}
 
 	return screen{text: b.String(), rows: buttons{
+		{btn("➕ Добавить трату", "ad")},
 		{btn("📊 Обзор", "ov:m"), btn("🏷 Категории", "cs:m")},
 		{btn("🎯 Лимиты", "bl"), btn("🐷 Цели", "gl")},
 		{btn("💳 Карты", "cd:m"), btn("🔁 Подписки", "sb")},
@@ -715,8 +718,8 @@ func (s *Service) lastScreen(ctx context.Context) (screen, error) {
 	rows := buttons{}
 	for _, t := range list {
 		rows = append(rows, []models.InlineKeyboardButton{btn(
-			fmt.Sprintf("%s %s · %s · %s", catEmoji(t.Category), ledgersvc.FormatAmount(t.AmountMinor), txTitle(t),
-				t.TS.In(s.cfg.Location).Format("02.01")),
+			fmt.Sprintf("%s · %s · %s", t.TS.In(s.cfg.Location).Format("02.01"), ledgersvc.FormatAmount(t.AmountMinor),
+				shorten(txTitle(t), 16)),
 			fmt.Sprintf("t:%d", t.ID))})
 	}
 	rows = append(rows, []models.InlineKeyboardButton{btn("🏠 Меню", "m")})
@@ -817,9 +820,22 @@ func (s *Service) txDeleteScreen(ctx context.Context, id int64, confirmed bool) 
 	return sc, err
 }
 
-// categoryButtons lays categories out two per row.
+// categoryButtons lays categories out two per row, or one per row when any
+// name is long enough that Telegram would truncate it in a half-width button.
 func categoryButtons(cats []string, route func(string) string) buttons {
+	perRow := 2
+	for _, c := range cats {
+		if len([]rune(c)) > 11 {
+			perRow = 1
+		}
+	}
 	var rows buttons
+	if perRow == 1 {
+		for _, c := range cats {
+			rows = append(rows, []models.InlineKeyboardButton{btn(catEmoji(c)+" "+c, route(c))})
+		}
+		return rows
+	}
 	for i := 0; i < len(cats); i += 2 {
 		row := []models.InlineKeyboardButton{btn(catEmoji(cats[i])+" "+cats[i], route(cats[i]))}
 		if i+1 < len(cats) {
@@ -828,4 +844,14 @@ func categoryButtons(cats []string, route func(string) string) buttons {
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+// shorten cuts s to n runes with an ellipsis, so a button label is trimmed at
+// its end instead of Telegram eliding the middle.
+func shorten(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
 }

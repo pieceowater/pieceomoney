@@ -18,6 +18,7 @@ Apple Pay tap
 ## Features
 
 - **Automatic capture** of every Apple Pay payment through one iOS automation.
+- **Manual entry** for cash and anything Wallet doesn't see: `/add 1500 Taxi yesterday #work` or the Add button.
 - **Categories** attached to merchants: pick a category once and every payment from that merchant follows.
 - **Overview** for today, week, month and previous month, with each category's share of spending.
 - **Monthly limits per category** with progress, remaining amount per day and end-of-month pace. Alerts at 90% and again at 100%.
@@ -158,6 +159,16 @@ Each new payment is checked and the bot messages you when:
 - it brings the day's count to `DAILY_PAYMENTS_WARN`;
 - it pushes a category to 90% or 100% of its monthly limit.
 
+### Manual entry
+
+Send `/add` (or press the Add button) and type one line: the amount first, without spaces inside it, then the merchant. Optional parts can come in any order after the amount:
+
+- a date: `today`, `yesterday`, `05.10` or `05.10.2026` (a day without a year that would be in the future means last year; past days are stamped at noon; the Russian words for today, yesterday and the day before yesterday work too);
+- a currency code such as `USD`, or a symbol on the amount (`$5`);
+- `#tags`.
+
+Examples: `1500 Taxi`, `3200 Magnum yesterday #groceries`, `12 USD Steam 03.10`. A minus before the amount records a refund. Manual payments are never deduplicated, show "Manual" (in Russian) as the card, get the merchant's remembered category if there is one, and go through the same alerts and limits as Wallet payments.
+
 ### Recurring payments
 
 A series is reported when the same merchant charges a similar amount (within 20% of the median) on a steady schedule: monthly (3 or more payments, about 26 to 34 days apart) or weekly (4 or more). A series whose next charge is long overdue is treated as cancelled and dropped.
@@ -172,6 +183,7 @@ Create a goal with `name; target; per month`, for example `Vacation; 1500000; 15
 | --- | --- |
 | `/start` | Welcome, enable the bottom keyboard, open the menu |
 | `/menu` | Main menu |
+| `/add <amount> <name> [date] [#tags]` | Add a payment by hand |
 | `/stats` | Overview |
 | `/budget` | Limits; `/budget <category> <amount>` sets one, `/budget <category> off` removes it |
 | `/last` | Recent payments |

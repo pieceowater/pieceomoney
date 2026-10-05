@@ -113,6 +113,99 @@ func Parse(text, defaultCurrency string, loc *time.Location, now time.Time) (rep
 	return t, nil
 }
 
+var knownCurrencies = map[string]bool{"KZT": true, "USD": true, "EUR": true, "RUB": true, "GBP": true, "UAH": true, "TRY": true, "CNY": true, "JPY": true, "AED": true}
+
+// ParseManual reads a payment typed by hand: the amount first (no spaces
+// inside it), then any of, in any order, a currency code (USD), a date
+// (сегодня/today, вчера/yesterday, позавчера, 05.10 or 05.10.2026), #tags, and the rest is
+// the merchant: "1500 Такси вчера #работа". Past dates are stamped at noon.
+func ParseManual(text, defaultCurrency string, loc *time.Location, now time.Time) (repo.Transaction, error) {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return repo.Transaction{}, errors.New("пусто: жду сумму и название, например 1500 Такси")
+	}
+	amount, err := parseAmount(fields[0])
+	if err != nil {
+		return repo.Transaction{}, fmt.Errorf("первым должна идти сумма без пробелов, например 1500 Такси (не понял %q)", fields[0])
+	}
+
+	currency := detectCurrency(fields[0])
+	ts := now
+	var tags, merchant []string
+	for _, f := range fields[1:] {
+		switch {
+		case strings.HasPrefix(f, "#"):
+			tags = append(tags, f)
+		case knownCurrencies[strings.ToUpper(f)] && f == strings.ToUpper(f):
+			currency = f
+		default:
+			if d, ok := parseRelativeDate(f, now, loc); ok {
+				ts = d
+				continue
+			}
+			merchant = append(merchant, f)
+		}
+	}
+	if len(merchant) == 0 {
+		return repo.Transaction{}, errors.New("добавь название магазина после суммы, например 1500 Такси")
+	}
+	if currency == "" {
+		currency = defaultCurrency
+	}
+
+	t := repo.Transaction{
+		TS: ts, AmountMinor: amount, Currency: currency,
+		Merchant: strings.Join(merchant, " "), Card: "Вручную",
+		Tags: normalizeTags(strings.Join(tags, " ")), Raw: strings.TrimSpace(text),
+	}
+	// Manual entries are never deduplicated: adding the same coffee twice is
+	// legitimate, so the fingerprint carries a unique nonce.
+	t.Fingerprint = fingerprint(t, now.UnixNano())
+	return t, nil
+}
+
+// parseRelativeDate understands the date words ParseManual accepts.
+func parseRelativeDate(f string, now time.Time, loc *time.Location) (time.Time, bool) {
+	local := now.In(loc)
+	noon := func(t time.Time) time.Time { return time.Date(t.Year(), t.Month(), t.Day(), 12, 0, 0, 0, loc) }
+	switch strings.ToLower(f) {
+	case "сегодня", "today":
+		return now, true
+	case "вчера", "yesterday":
+		return noon(local.AddDate(0, 0, -1)), true
+	case "позавчера":
+		return noon(local.AddDate(0, 0, -2)), true
+	}
+	for _, layout := range []string{"02.01.2006", "02.01.06"} {
+		if t, err := time.ParseInLocation(layout, f, loc); err == nil {
+			return noon(t), true
+		}
+	}
+	if t, err := time.ParseInLocation("02.01", f, loc); err == nil {
+		d := time.Date(local.Year(), t.Month(), t.Day(), 12, 0, 0, 0, loc)
+		if d.After(local.AddDate(0, 0, 1)) {
+			d = d.AddDate(-1, 0, 0) // "05.12" typed in October means last December
+		}
+		return d, true
+	}
+	return time.Time{}, false
+}
+
+// normalizeTags mirrors analytics.NormalizeTags (kept local so the ledger
+// package has no dependency on analytics).
+func normalizeTags(input string) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range strings.FieldsFunc(input, func(r rune) bool { return r == ',' || r == ' ' || r == ';' }) {
+		f = strings.ToLower(strings.TrimLeft(strings.TrimSpace(f), "#"))
+		if f != "" && !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	return strings.Join(out, ",")
+}
+
 func parsePipe(text string) (payload, error) {
 	parts := strings.Split(strings.TrimSpace(text), "|")
 	if len(parts) < 2 {

@@ -108,3 +108,64 @@ func TestParseDetectsCurrencyFromAmount(t *testing.T) {
 		t.Errorf("amount = %d, want 35000", tx.AmountMinor)
 	}
 }
+
+func TestParseManual(t *testing.T) {
+	loc := time.UTC
+	now := time.Date(2026, 10, 5, 15, 30, 0, 0, time.UTC)
+
+	tx, err := ParseManual("1500 Такси вчера #Работа #поездка", "KZT", loc, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tx.AmountMinor != 150000 || tx.Merchant != "Такси" || tx.Currency != "KZT" || tx.Tags != "работа,поездка" || tx.Card != "Вручную" {
+		t.Fatalf("unexpected tx: %+v", tx)
+	}
+	if want := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC); !tx.TS.Equal(want) {
+		t.Errorf("date = %v, want %v", tx.TS, want)
+	}
+
+	cases := []struct {
+		in       string
+		merchant string
+		minor    int64
+		currency string
+		day      int
+		month    time.Month
+	}{
+		{"2500.50 Кофе с собой", "Кофе с собой", 250050, "KZT", 5, 10},
+		{"12 USD Steam", "Steam", 1200, "USD", 5, 10},
+		{"$5 Kiosk", "Kiosk", 500, "USD", 5, 10},
+		{"300 Булочная 03.10", "Булочная", 30000, "KZT", 3, 10},
+		{"300 Булочная 05.12", "Булочная", 30000, "KZT", 5, 12}, // future month -> last year
+		{"400 Bakery yesterday", "Bakery", 40000, "KZT", 4, 10},
+		{"400 Bakery today", "Bakery", 40000, "KZT", 5, 10},
+		{"-700 Возврат Sulpak", "Возврат Sulpak", -70000, "KZT", 5, 10},
+	}
+	for _, c := range cases {
+		got, err := ParseManual(c.in, "KZT", loc, now)
+		if err != nil {
+			t.Errorf("ParseManual(%q): %v", c.in, err)
+			continue
+		}
+		if got.Merchant != c.merchant || got.AmountMinor != c.minor || got.Currency != c.currency ||
+			got.TS.Day() != c.day || got.TS.Month() != c.month {
+			t.Errorf("ParseManual(%q) = %+v", c.in, got)
+		}
+	}
+	if got, _ := ParseManual("300 Булочная 05.12", "KZT", loc, now); got.TS.Year() != 2025 {
+		t.Errorf("05.12 typed in October should resolve to 2025, got %d", got.TS.Year())
+	}
+
+	// Same entry twice is not a duplicate.
+	a, _ := ParseManual("100 Кофе", "KZT", loc, now)
+	b, _ := ParseManual("100 Кофе", "KZT", loc, now.Add(time.Nanosecond))
+	if a.Fingerprint == b.Fingerprint {
+		t.Error("manual entries must never share a fingerprint")
+	}
+
+	for _, bad := range []string{"", "Такси 1500", "1500", "1500 вчера", "1500 #tag"} {
+		if _, err := ParseManual(bad, "KZT", loc, now); err == nil {
+			t.Errorf("ParseManual(%q) should fail", bad)
+		}
+	}
+}

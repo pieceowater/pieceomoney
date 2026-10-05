@@ -92,6 +92,9 @@ func (s *Service) handlePending(ctx context.Context, b *tgbot.Bot, p pending, te
 	case pendFind:
 		s.sendFind(ctx, b, text)
 
+	case pendAdd:
+		s.addManual(ctx, b, text)
+
 	case pendNote:
 		note := text
 		if note == "-" {
@@ -201,6 +204,12 @@ func (s *Service) handleCommand(ctx context.Context, b *tgbot.Bot, text string) 
 			s.logger.Error("failed to send start", slog.Any("error", err))
 		}
 		s.sendRoute(ctx, b, "m")
+	case "add":
+		if args == "" {
+			s.sendRoute(ctx, b, "ad")
+			return
+		}
+		s.addManual(ctx, b, args)
 	case "find":
 		if args == "" {
 			s.sendRoute(ctx, b, "fd")

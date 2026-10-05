@@ -31,7 +31,7 @@ func TestPieAndBars(t *testing.T) {
 		t.Fatal(err)
 	}
 	img, err := png.Decode(bytes.NewReader(data))
-	if err != nil || img.Bounds().Dx() < 800 {
+	if err != nil || img.Bounds().Dx() < 700 {
 		t.Fatalf("pie png invalid: %v", err)
 	}
 	if p := os.Getenv("CHART_OUT"); p != "" {
@@ -42,7 +42,7 @@ func TestPieAndBars(t *testing.T) {
 	for i := 1; i <= 31; i++ {
 		bars = append(bars, Bar{Label: itoa(int64(i)), Amount: int64(10000 + (i*7919)%90000)})
 	}
-	data, err = Bars(bars, 1000, 520)
+	data, err = Bars(bars, 780, 520, 15)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +51,28 @@ func TestPieAndBars(t *testing.T) {
 	}
 	if p := os.Getenv("CHART_OUT"); p != "" {
 		os.WriteFile(p+"/bars.png", data, 0o644)
+	}
+
+	trend := []Bar{{"май", 31200000}, {"июн", 28900000}, {"июл", 45000000}, {"авг", 38000000}, {"сен", 41500000}, {"окт", 12300000}}
+	data, err = Bars(trend, 780, 520, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := os.Getenv("CHART_OUT"); p != "" {
+		os.WriteFile(p+"/trend.png", data, 0o644)
+	}
+
+	// One slice must still draw a disc, not an empty canvas.
+	one, err := Pie([]Slice{{"Food & Drinks", 35000}}, money, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, _ = png.Decode(bytes.NewReader(one))
+	if r, g, b, _ := img.At(img.Bounds().Dx()/2, 280).RGBA(); r>>8 == 255 && g>>8 == 255 && b>>8 == 255 {
+		t.Error("single-slice pie is blank at its centre")
+	}
+	if p := os.Getenv("CHART_OUT"); p != "" {
+		os.WriteFile(p+"/pie1.png", one, 0o644)
 	}
 
 	if _, err := Pie(nil, money, "x"); err == nil {

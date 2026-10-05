@@ -53,9 +53,9 @@ func scanTransactions(rows *sql.Rows) ([]Transaction, error) {
 func (r *TransactionsRepo) Insert(ctx context.Context, t Transaction) (int64, bool, error) {
 	res, err := r.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO transactions
-		    (ts, created_ts, amount_minor, currency, merchant, card, name, category, raw, fingerprint)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.TS.Unix(), time.Now().Unix(), t.AmountMinor, t.Currency, t.Merchant, t.Card, t.Name, t.Category, t.Raw, t.Fingerprint)
+		    (ts, created_ts, amount_minor, currency, merchant, card, name, category, note, tags, raw, fingerprint)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.TS.Unix(), time.Now().Unix(), t.AmountMinor, t.Currency, t.Merchant, t.Card, t.Name, t.Category, t.Note, t.Tags, t.Raw, t.Fingerprint)
 	if err != nil {
 		return 0, false, err
 	}

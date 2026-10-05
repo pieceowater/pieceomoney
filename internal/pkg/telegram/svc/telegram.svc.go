@@ -56,6 +56,7 @@ const (
 	pendGoalNew  = "goal_new"  // text is "name; target; monthly"
 	pendGoalEdit = "goal_edit" // arg: goal id; same format
 	pendGoalDep  = "goal_dep"  // arg: goal id; text is an amount (negative = withdraw)
+	pendAdd      = "add"       // text is a payment typed by hand
 )
 
 type pending struct{ kind, arg string }
@@ -135,6 +136,25 @@ func (s *Service) ingest(ctx context.Context, b *tgbot.Bot, text string) {
 			"\n\nПришло:\n<code>"+html.EscapeString(shown)+"</code>", menuRow())
 		return
 	}
+
+	s.store(ctx, b, t)
+}
+
+// addManual saves a payment the owner typed in the chat.
+func (s *Service) addManual(ctx context.Context, b *tgbot.Bot, text string) {
+	t, err := ledgersvc.ParseManual(text, s.cfg.DefaultCurrency, s.cfg.Location, time.Now())
+	if err != nil {
+		s.setPending(pendAdd, "")
+		s.send(ctx, b, "⚠️ "+html.EscapeString(err.Error()), buttons{{btn("✖️ Отмена", "m")}})
+		return
+	}
+	s.store(ctx, b, t)
+}
+
+// store applies category rules, saves t and sends the confirmation and any
+// alerts. Shared by Shortcut payments and manual entries.
+func (s *Service) store(ctx context.Context, b *tgbot.Bot, t repo.Transaction) {
+	var err error
 
 	// Category precedence: what the payload says, then a remembered
 	// merchant rule, then a visible placeholder.
